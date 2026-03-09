@@ -1,0 +1,32 @@
+# Firmware binaries (proprietary, not redistributable)
+*.bin
+*.deb
+
+# Extracted Protect application (343MB, copyrighted)
+protect_app/
+
+# ESPHome build artifacts
+.esphome/
+sdkconfig.*
+build/
+
+# Secrets
+secrets.yaml
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+.mcp.json
+CLAUDE.md
+
+# RE working notes (superseded by protocol doc)
+triage.md
+function_map.md
+tls_cert_provisioning.md
+
+# OS
+Thumbs.db
+.DS_Store

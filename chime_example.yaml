@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 Qoole (https://github.com/Qoole)
+
+esphome:
+  name: chime-clone
+  friendly_name: "UP Chime Clone"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: external_components
+
+logger:
+  level: DEBUG
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+unifi_chime:
+
+api:
+
+ota:
+  platform: esphome
