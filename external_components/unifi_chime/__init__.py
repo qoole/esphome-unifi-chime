@@ -8,14 +8,16 @@ from esphome.const import CONF_ID, CONF_TRIGGER_ID
 from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option, include_builtin_idf_component
 
 DEPENDENCIES = ["wifi"]
-AUTO_LOAD = []
+AUTO_LOAD = ["binary_sensor"]
 CODEOWNERS = ["@qoole"]
 
 CONF_ON_RING = "on_ring"
+CONF_ON_BUZZER = "on_buzzer"
 
 unifi_chime_ns = cg.esphome_ns.namespace("unifi_chime")
 UnifiChimeComponent = unifi_chime_ns.class_("UnifiChimeComponent", cg.Component)
-ChimeRingTrigger = unifi_chime_ns.class_("ChimeRingTrigger", automation.Trigger.template(cg.uint8))
+ChimeRingTrigger = unifi_chime_ns.class_("ChimeRingTrigger", automation.Trigger.template(cg.uint8, cg.uint8))
+ChimeBuzzerTrigger = unifi_chime_ns.class_("ChimeBuzzerTrigger", automation.Trigger.template())
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -23,6 +25,11 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_RING): automation.validate_automation(
             {
                 cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ChimeRingTrigger),
+            }
+        ),
+        cv.Optional(CONF_ON_BUZZER): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ChimeBuzzerTrigger),
             }
         ),
     }
@@ -35,7 +42,11 @@ async def to_code(config):
 
     for conf in config.get(CONF_ON_RING, []):
         trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
-        await automation.build_automation(trigger, [(cg.uint8, "x")], conf)
+        await automation.build_automation(trigger, [(cg.uint8, "track"), (cg.uint8, "volume")], conf)
+
+    for conf in config.get(CONF_ON_BUZZER, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [], conf)
 
     # IDF components
     add_idf_component(

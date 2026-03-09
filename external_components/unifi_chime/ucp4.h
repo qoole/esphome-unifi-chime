@@ -24,6 +24,7 @@ class UCP4Client {
                                                     const std::string &body_json)>;
 
   bool is_started() const { return started_; }
+  bool is_connected() const { return connected_; }
   void start(const AdoptionConfig &config);
   void stop();
   void loop();

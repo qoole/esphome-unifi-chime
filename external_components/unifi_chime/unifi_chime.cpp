@@ -38,6 +38,18 @@ void UnifiChimeComponent::setup() {
 void UnifiChimeComponent::loop() {
   adoption_.loop();
 
+  // Publish binary sensor state changes
+  bool adopted = is_adopted();
+  bool connected = is_connected();
+  if (adopted_sensor_ && adopted != last_adopted_) {
+    adopted_sensor_->publish_state(adopted);
+    last_adopted_ = adopted;
+  }
+  if (connected_sensor_ && connected != last_connected_) {
+    connected_sensor_->publish_state(connected);
+    last_connected_ = connected;
+  }
+
   switch (adoption_.state()) {
     case AdoptionPhase::WAITING_FOR_ADOPT:
       // Discovery is running, HTTPS server is listening
@@ -256,19 +268,24 @@ std::string UnifiChimeComponent::handle_command_(const std::string &action,
   if (action == "playSpeaker") {
     ESP_LOGI(TAG, "playSpeaker: %s", body.c_str());
     uint8_t track_no = 0;
+    uint8_t volume = 100;
     cJSON *b = cJSON_Parse(body.c_str());
     if (b) {
       cJSON *tn = cJSON_GetObjectItem(b, "track_no");
       if (tn && cJSON_IsNumber(tn))
         track_no = static_cast<uint8_t>(tn->valueint);
+      cJSON *vol = cJSON_GetObjectItem(b, "volume");
+      if (vol && cJSON_IsNumber(vol))
+        volume = static_cast<uint8_t>(vol->valueint);
       cJSON_Delete(b);
     }
-    ring_callbacks_.call(track_no);
+    ring_callbacks_.call(track_no, volume);
     return "\"ok\"";
   }
 
   if (action == "playBuzzer") {
     ESP_LOGI(TAG, "playBuzzer: %s", body.c_str());
+    buzzer_callbacks_.call();
     return "\"ok\"";
   }
 
@@ -303,6 +320,14 @@ std::string UnifiChimeComponent::handle_command_(const std::string &action,
 
   ESP_LOGW(TAG, "Unhandled command: %s", action.c_str());
   return "{}";
+}
+
+bool UnifiChimeComponent::is_adopted() const {
+  return adoption_.state() == AdoptionPhase::ADOPTED;
+}
+
+bool UnifiChimeComponent::is_connected() const {
+  return ucp4_.is_started() && ucp4_.is_connected();
 }
 
 }  // namespace unifi_chime

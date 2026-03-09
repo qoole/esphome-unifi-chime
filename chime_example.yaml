@@ -11,9 +11,15 @@ esp32:
     type: esp-idf
 
 external_components:
+  # For local development:
   - source:
       type: local
       path: external_components
+  # Or pull from GitHub:
+  # - source:
+  #     type: git
+  #     url: https://github.com/qoole/esphome-unifi-chime
+  #     ref: master
 
 logger:
   level: DEBUG
@@ -24,17 +30,31 @@ wifi:
 
 unifi_chime:
   # Trigger when the controller sends a ring command (e.g. doorbell press).
-  # The variable 'x' is the track number (uint8_t).
+  # Variables: track (uint8_t), volume (uint8_t, 0-100).
   on_ring:
     - logger.log:
-        format: "Doorbell rang! Track: %d"
-        args: [x]
+        format: "Doorbell rang! Track: %d, Volume: %d"
+        args: [track, volume]
     # - homeassistant.event:
     #     event: esphome.doorbell_ring
     #     data:
-    #       track: !lambda "return x;"
+    #       track: !lambda "return track;"
+    #       volume: !lambda "return volume;"
     # - rtttl.play: "ring:d=4,o=5,b=200:e6,c6"
     # - switch.toggle: my_relay
+  # Trigger when the controller sends a buzzer/alarm command.
+  # This fires for security alarm events routed to the chime,
+  # distinct from doorbell rings (which use on_ring / playSpeaker).
+  # on_buzzer:
+  #   - logger.log: "Buzzer alarm triggered!"
+
+# Binary sensors for adoption and controller connection state.
+# binary_sensor:
+#   - platform: unifi_chime
+#     adopted:
+#       name: "Chime Adopted"
+#     connected:
+#       name: "Chime Connected"
 
 api:
 
