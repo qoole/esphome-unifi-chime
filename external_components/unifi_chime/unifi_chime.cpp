@@ -255,6 +255,15 @@ std::string UnifiChimeComponent::handle_command_(const std::string &action,
 
   if (action == "playSpeaker") {
     ESP_LOGI(TAG, "playSpeaker: %s", body.c_str());
+    uint8_t track_no = 0;
+    cJSON *b = cJSON_Parse(body.c_str());
+    if (b) {
+      cJSON *tn = cJSON_GetObjectItem(b, "track_no");
+      if (tn && cJSON_IsNumber(tn))
+        track_no = static_cast<uint8_t>(tn->valueint);
+      cJSON_Delete(b);
+    }
+    ring_callbacks_.call(track_no);
     return "\"ok\"";
   }
 

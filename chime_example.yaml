@@ -23,6 +23,18 @@ wifi:
   password: !secret wifi_password
 
 unifi_chime:
+  # Trigger when the controller sends a ring command (e.g. doorbell press).
+  # The variable 'x' is the track number (uint8_t).
+  on_ring:
+    - logger.log:
+        format: "Doorbell rang! Track: %d"
+        args: [x]
+    # - homeassistant.event:
+    #     event: esphome.doorbell_ring
+    #     data:
+    #       track: !lambda "return x;"
+    # - rtttl.play: "ring:d=4,o=5,b=200:e6,c6"
+    # - switch.toggle: my_relay
 
 api:
 

@@ -3,19 +3,28 @@
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.const import CONF_ID
+from esphome import automation
+from esphome.const import CONF_ID, CONF_TRIGGER_ID
 from esphome.components.esp32 import add_idf_component, add_idf_sdkconfig_option, include_builtin_idf_component
 
 DEPENDENCIES = ["wifi"]
 AUTO_LOAD = []
 CODEOWNERS = ["@qoole"]
 
+CONF_ON_RING = "on_ring"
+
 unifi_chime_ns = cg.esphome_ns.namespace("unifi_chime")
 UnifiChimeComponent = unifi_chime_ns.class_("UnifiChimeComponent", cg.Component)
+ChimeRingTrigger = unifi_chime_ns.class_("ChimeRingTrigger", automation.Trigger.template(cg.uint8))
 
 CONFIG_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(UnifiChimeComponent),
+        cv.Optional(CONF_ON_RING): automation.validate_automation(
+            {
+                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(ChimeRingTrigger),
+            }
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -23,6 +32,10 @@ CONFIG_SCHEMA = cv.Schema(
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+
+    for conf in config.get(CONF_ON_RING, []):
+        trigger = cg.new_Pvariable(conf[CONF_TRIGGER_ID], var)
+        await automation.build_automation(trigger, [(cg.uint8, "x")], conf)
 
     # IDF components
     add_idf_component(
