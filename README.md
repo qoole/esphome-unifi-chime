@@ -51,7 +51,7 @@ Any ESP32 dev board with WiFi. That's it for the base functionality. For full fe
 ## Project Structure
 
 ```
-external_components/unifi_chime/  ESPHome custom component
+components/unifi_chime/       ESPHome custom component
   unifi_chime.h/cpp           Main component — identity, command handler, lifecycle
   adoption.h/cpp              HTTPS server, /api/info, /api/adopt, NVS persistence
   ucp4.h/cpp                  WebSocket client, BINME codec, command dispatch

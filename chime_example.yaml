@@ -14,7 +14,7 @@ external_components:
   # For local development:
   - source:
       type: local
-      path: external_components
+      path: components
   # Or pull from GitHub:
   # - source:
   #     type: git
