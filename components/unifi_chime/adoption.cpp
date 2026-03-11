@@ -176,13 +176,20 @@ esp_err_t AdoptionState::handle_post_adopt_(httpd_req_t *req) {
   }
 
   std::vector<char> buf(content_len + 1, 0);
-  int received = httpd_req_recv(req, buf.data(), content_len);
-  if (received <= 0) {
-    httpd_resp_send(req, "\"Missing fields\"", HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+  int total_received = 0;
+  while (total_received < content_len) {
+    int received = httpd_req_recv(req, buf.data() + total_received,
+                                  content_len - total_received);
+    if (received <= 0) {
+      if (received == HTTPD_SOCK_ERR_TIMEOUT)
+        continue;  // retry on timeout
+      httpd_resp_send(req, "\"Missing fields\"", HTTPD_RESP_USE_STRLEN);
+      return ESP_OK;
+    }
+    total_received += received;
   }
 
-  if (!self->parse_hosts_(buf.data(), received)) {
+  if (!self->parse_hosts_(buf.data(), total_received)) {
     httpd_resp_send(req, "\"Missing fields\"", HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
   }

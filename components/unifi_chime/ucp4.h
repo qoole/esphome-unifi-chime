@@ -3,9 +3,13 @@
 
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
+
+#include "freertos/semphr.h"
 
 #include "binme.h"
 #include "esp_websocket_client.h"
@@ -34,7 +38,7 @@ class UCP4Client {
 
  protected:
   bool started_{false};
-  bool connected_{false};
+  std::atomic<bool> connected_{false};
   bool console_info_sent_{false};
   esp_websocket_client_handle_t ws_handle_{nullptr};
   char *headers_{nullptr};
@@ -43,6 +47,16 @@ class UCP4Client {
   uint32_t last_status_ms_{0};
   std::string console_id_;
   CommandHandler command_handler_;
+
+  // Fragment reassembly (WS task only — no synchronization needed)
+  std::vector<uint8_t> rx_buffer_;
+
+  // Thread-safe message queue (WS task -> main loop)
+  SemaphoreHandle_t rx_mutex_{nullptr};
+  std::vector<std::vector<uint8_t>> rx_queue_;
+
+  /// Drain queued messages from WS task and process on main loop.
+  void process_rx_queue_();
 
   /// Build the WSS URL from host/port.
   std::string build_url_() const;

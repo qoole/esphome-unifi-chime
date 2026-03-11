@@ -19,6 +19,7 @@ static const char *const TAG = "ucp4";
 static constexpr uint32_t STATUS_INTERVAL_MS = 30000;
 static constexpr int WS_BUFFER_SIZE = 5120;
 static constexpr int WS_TIMEOUT_SEC = 60;
+static constexpr TickType_t WS_SEND_TIMEOUT = pdMS_TO_TICKS(5000);
 
 std::string UCP4Client::build_url_() const {
   if (!config_ || config_->hosts.empty())
@@ -45,37 +46,32 @@ void UCP4Client::start(const AdoptionConfig &config) {
   ESP_LOGI(TAG, "  client_cert_len=%u, client_key_len=%u",
            (unsigned)FACTORY_CA_PEM_LEN, (unsigned)FACTORY_KEY_PEM_LEN);
 
-  // Build headers matching firmware format exactly
-  std::string token_hdr;
+  // Build headers matching firmware format exactly (dynamic to avoid truncation)
+  std::string hdr_str;
+  hdr_str += "x-adopted: ";
+  hdr_str += config_->adopted ? "true" : "false";
+  hdr_str += "\r\n";
+
+  char sysid_buf[8];
+  snprintf(sysid_buf, sizeof(sysid_buf), "%04X", config_->identity->sysid);
+  hdr_str += "x-sysid: ";
+  hdr_str += sysid_buf;
+  hdr_str += "\r\n";
+
+  hdr_str += "x-type: " + config_->identity->name + "\r\n";
+  hdr_str += "x-ident: " + config_->identity->mac_string + "\r\n";
+  hdr_str += "x-ip: " + config_->ip_address + "\r\n";
+  hdr_str += "x-mode: 0\r\n";
+  hdr_str += "x-device-id: " + config_->identity->device_id + "\r\n";
+  hdr_str += "x-guid: " + config_->identity->guid + "\r\n";
+  hdr_str += "x-version: " + config_->identity->fw_version + "\r\n";
   if (!config_->token.empty())
-    token_hdr = "x-token: " + config_->token + "\r\n";
+    hdr_str += "x-token: " + config_->token + "\r\n";
 
-  char hdr_buf[640];
-  snprintf(hdr_buf, sizeof(hdr_buf),
-           "x-adopted: %s\r\n"
-           "x-sysid: %04X\r\n"
-           "x-type: %s\r\n"
-           "x-ident: %s\r\n"  // MAC address, not BLE name
-           "x-ip: %s\r\n"
-           "x-mode: 0\r\n"
-           "x-device-id: %s\r\n"
-           "x-guid: %s\r\n"
-           "x-version: %s\r\n"
-           "%s",
-           config_->adopted ? "true" : "false",
-           config_->identity->sysid,
-           config_->identity->name.c_str(),
-           config_->identity->mac_string.c_str(),
-           config_->ip_address.c_str(),
-           config_->identity->device_id.c_str(),
-           config_->identity->guid.c_str(),
-           config_->identity->fw_version.c_str(),
-           token_hdr.c_str());
-
-  ESP_LOGI(TAG, "WSS headers:\n%s", hdr_buf);
+  ESP_LOGI(TAG, "WSS headers:\n%s", hdr_str.c_str());
 
   // Store on heap — websocket client may reference after init
-  headers_ = strdup(hdr_buf);
+  headers_ = strdup(hdr_str.c_str());
 
   esp_websocket_client_config_t ws_cfg = {};
   ws_cfg.uri = url.c_str();
@@ -101,6 +97,10 @@ void UCP4Client::start(const AdoptionConfig &config) {
     return;
   }
 
+  // Create message queue mutex if needed (survives stop/start cycles)
+  if (!rx_mutex_)
+    rx_mutex_ = xSemaphoreCreateMutex();
+
   esp_websocket_register_events(ws_handle_, WEBSOCKET_EVENT_ANY,
                                  ws_event_handler_, this);
   esp_websocket_client_start(ws_handle_);
@@ -119,9 +119,17 @@ void UCP4Client::stop() {
   }
   started_ = false;
   connected_ = false;
+  rx_buffer_.clear();
+  if (rx_mutex_ && xSemaphoreTake(rx_mutex_, pdMS_TO_TICKS(100)) == pdTRUE) {
+    rx_queue_.clear();
+    xSemaphoreGive(rx_mutex_);
+  }
 }
 
 void UCP4Client::loop() {
+  // Process queued messages from WS task on the main loop
+  process_rx_queue_();
+
   if (!started_ || !connected_)
     return;
 
@@ -136,6 +144,19 @@ void UCP4Client::loop() {
   if (now - last_status_ms_ >= STATUS_INTERVAL_MS) {
     send_status_report_();
     last_status_ms_ = now;
+  }
+}
+
+void UCP4Client::process_rx_queue_() {
+  if (!rx_mutex_ || xSemaphoreTake(rx_mutex_, 0) != pdTRUE)
+    return;
+
+  std::vector<std::vector<uint8_t>> pending;
+  std::swap(pending, rx_queue_);
+  xSemaphoreGive(rx_mutex_);
+
+  for (auto &msg : pending) {
+    handle_incoming_(msg.data(), msg.size());
   }
 }
 
@@ -168,8 +189,25 @@ void UCP4Client::on_ws_event_(int32_t event_id, void *data) {
 
     case WEBSOCKET_EVENT_DATA:
       if (event->op_code == 0x02) {  // binary frame
-        handle_incoming_(reinterpret_cast<const uint8_t *>(event->data_ptr),
-                         event->data_len);
+        // Reassemble fragmented frames (WS buffer may be smaller than payload)
+        if (event->payload_offset == 0) {
+          rx_buffer_.clear();
+          rx_buffer_.reserve(event->payload_len);
+        }
+        rx_buffer_.insert(rx_buffer_.end(),
+                          reinterpret_cast<const uint8_t *>(event->data_ptr),
+                          reinterpret_cast<const uint8_t *>(event->data_ptr) + event->data_len);
+
+        // Queue complete message for processing on main loop task
+        if (static_cast<int>(rx_buffer_.size()) >= event->payload_len) {
+          if (rx_mutex_ && xSemaphoreTake(rx_mutex_, pdMS_TO_TICKS(100)) == pdTRUE) {
+            rx_queue_.push_back(std::move(rx_buffer_));
+            xSemaphoreGive(rx_mutex_);
+          } else {
+            ESP_LOGW(TAG, "Failed to queue incoming message, dropping");
+          }
+          rx_buffer_.clear();
+        }
       }
       break;
 
@@ -254,11 +292,13 @@ void UCP4Client::send_get_console_info_() {
   char *body_str = cJSON_PrintUnformatted(body);
 
   auto frame = BinmeCodec::encode_message(header_str, body_str, BINME_REQUEST);
-  esp_websocket_client_send_bin(ws_handle_,
-                                 reinterpret_cast<const char *>(frame.data()),
-                                 frame.size(), portMAX_DELAY);
-
-  ESP_LOGI(TAG, "Sent getConsoleInfo");
+  int sent = esp_websocket_client_send_bin(ws_handle_,
+                                            reinterpret_cast<const char *>(frame.data()),
+                                            frame.size(), WS_SEND_TIMEOUT);
+  if (sent < 0)
+    ESP_LOGE(TAG, "Failed to send getConsoleInfo");
+  else
+    ESP_LOGI(TAG, "Sent getConsoleInfo");
 
   free(header_str);
   free(body_str);
@@ -303,11 +343,13 @@ void UCP4Client::send_status_report_() {
   char *body_str = cJSON_PrintUnformatted(body);
 
   auto frame = BinmeCodec::encode_message(header_str, body_str, BINME_REQUEST);
-  esp_websocket_client_send_bin(ws_handle_,
-                                 reinterpret_cast<const char *>(frame.data()),
-                                 frame.size(), portMAX_DELAY);
-
-  ESP_LOGD(TAG, "Sent status report (RSSI=%d)", rssi);
+  int sent = esp_websocket_client_send_bin(ws_handle_,
+                                            reinterpret_cast<const char *>(frame.data()),
+                                            frame.size(), WS_SEND_TIMEOUT);
+  if (sent < 0)
+    ESP_LOGE(TAG, "Failed to send status report");
+  else
+    ESP_LOGD(TAG, "Sent status report (RSSI=%d)", rssi);
 
   free(header_str);
   free(body_str);
@@ -325,11 +367,13 @@ void UCP4Client::send_response_(const std::string &request_id, int response_code
   char *header_str = cJSON_PrintUnformatted(header);
 
   auto frame = BinmeCodec::encode_message(header_str, body_json);
-  esp_websocket_client_send_bin(ws_handle_,
-                                 reinterpret_cast<const char *>(frame.data()),
-                                 frame.size(), portMAX_DELAY);
-
-  ESP_LOGD(TAG, "Sent response (id=%s, code=%d)", request_id.c_str(), response_code);
+  int sent = esp_websocket_client_send_bin(ws_handle_,
+                                            reinterpret_cast<const char *>(frame.data()),
+                                            frame.size(), WS_SEND_TIMEOUT);
+  if (sent < 0)
+    ESP_LOGE(TAG, "Failed to send response (id=%s)", request_id.c_str());
+  else
+    ESP_LOGD(TAG, "Sent response (id=%s, code=%d)", request_id.c_str(), response_code);
 
   free(header_str);
   cJSON_Delete(header);
