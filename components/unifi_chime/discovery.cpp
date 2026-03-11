@@ -192,8 +192,8 @@ void Discovery::udp_loop_() {
     src_len = sizeof(src_addr);
     int rx = recvfrom(sock, rx_buf, sizeof(rx_buf), 0,
                       reinterpret_cast<struct sockaddr *>(&src_addr), &src_len);
-    if (rx > 0) {
-      // Any packet triggers a response (firmware doesn't parse request)
+    if (rx >= 4 && rx_buf[0] == 0x01 && rx_buf[1] == 0x00) {
+      // Validate discovery header: version=1, cmd=0
       auto response = build_response_packet_();
       sendto(sock, response.data(), response.size(), 0,
              reinterpret_cast<struct sockaddr *>(&src_addr), src_len);
@@ -266,7 +266,8 @@ void Discovery::start_ble_() {
   esp_ble_gap_set_device_name(identity_->ident.c_str());
 
   // Build advertisement data — fits within 31-byte BLE limit
-  auto adv_payload = build_ble_adv_data_();
+  // Stored as member to outlive async esp_ble_gap_config_adv_data
+  ble_adv_payload_ = build_ble_adv_data_();
 
   // BLE advertisement is limited to 31 bytes. Budget:
   //   Flags AD: 3 bytes
@@ -278,8 +279,8 @@ void Discovery::start_ble_() {
   adv_data.include_txpower = false;
   adv_data.min_interval = 0;  // don't include connection interval AD
   adv_data.max_interval = 0;
-  adv_data.manufacturer_len = adv_payload.size();
-  adv_data.p_manufacturer_data = adv_payload.data();
+  adv_data.manufacturer_len = ble_adv_payload_.size();
+  adv_data.p_manufacturer_data = ble_adv_payload_.data();
   adv_data.service_data_len = 0;
   adv_data.p_service_data = nullptr;
   adv_data.service_uuid_len = 0;
@@ -320,7 +321,7 @@ void Discovery::start(const DeviceIdentity &identity) {
   stop_sem_ = xSemaphoreCreateBinary();
 
   // Start UDP discovery task
-  xTaskCreate(udp_task_, "udp_disc", 4096, this, 5, &udp_task_handle_);
+  xTaskCreate(udp_task_, "udp_disc", 6144, this, 5, &udp_task_handle_);
 
   // Start BLE advertising
   start_ble_();

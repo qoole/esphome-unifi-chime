@@ -68,9 +68,10 @@ void UCP4Client::start(const AdoptionConfig &config) {
   if (!config_->token.empty())
     hdr_str += "x-token: " + config_->token + "\r\n";
 
-  ESP_LOGI(TAG, "WSS headers:\n%s", hdr_str.c_str());
+  ESP_LOGD(TAG, "WSS headers built (%zu bytes)", hdr_str.size());
 
   // Store on heap — websocket client may reference after init
+  free(headers_);
   headers_ = strdup(hdr_str.c_str());
 
   esp_websocket_client_config_t ws_cfg = {};
@@ -192,16 +193,22 @@ void UCP4Client::on_ws_event_(int32_t event_id, void *data) {
         // Reassemble fragmented frames (WS buffer may be smaller than payload)
         if (event->payload_offset == 0) {
           rx_buffer_.clear();
-          rx_buffer_.reserve(event->payload_len);
+          if (event->payload_len > 0 && event->payload_len <= WS_BUFFER_SIZE)
+            rx_buffer_.reserve(event->payload_len);
         }
         rx_buffer_.insert(rx_buffer_.end(),
                           reinterpret_cast<const uint8_t *>(event->data_ptr),
                           reinterpret_cast<const uint8_t *>(event->data_ptr) + event->data_len);
 
         // Queue complete message for processing on main loop task
-        if (static_cast<int>(rx_buffer_.size()) >= event->payload_len) {
+        if (event->payload_len > 0 &&
+            rx_buffer_.size() >= static_cast<size_t>(event->payload_len)) {
           if (rx_mutex_ && xSemaphoreTake(rx_mutex_, pdMS_TO_TICKS(100)) == pdTRUE) {
-            rx_queue_.push_back(std::move(rx_buffer_));
+            if (rx_queue_.size() < 8) {
+              rx_queue_.push_back(std::move(rx_buffer_));
+            } else {
+              ESP_LOGW(TAG, "rx_queue full, dropping message");
+            }
             xSemaphoreGive(rx_mutex_);
           } else {
             ESP_LOGW(TAG, "Failed to queue incoming message, dropping");
@@ -238,7 +245,8 @@ void UCP4Client::handle_incoming_(const uint8_t *data, size_t len) {
     cJSON *action_item = cJSON_GetObjectItem(header, "action");
     cJSON *id_item = cJSON_GetObjectItem(header, "id");
 
-    if (!action_item || !id_item) {
+    if (!action_item || !cJSON_IsString(action_item) ||
+        !id_item || !cJSON_IsString(id_item)) {
       ESP_LOGW(TAG, "Request missing action or id");
       cJSON_Delete(header);
       return;
@@ -277,7 +285,7 @@ void UCP4Client::handle_incoming_(const uint8_t *data, size_t len) {
 }
 
 void UCP4Client::send_get_console_info_() {
-  char id_buf[16];
+  char id_buf[24];
   snprintf(id_buf, sizeof(id_buf), "dev-%u", ++request_id_counter_);
 
   cJSON *header = cJSON_CreateObject();
@@ -313,7 +321,7 @@ void UCP4Client::send_status_report_() {
   const auto &id = *config_->identity;
 
   // Build header
-  char id_buf[16];
+  char id_buf[24];
   snprintf(id_buf, sizeof(id_buf), "dev-%u", ++request_id_counter_);
 
   cJSON *header = cJSON_CreateObject();

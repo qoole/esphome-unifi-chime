@@ -300,7 +300,6 @@ std::string UnifiChimeComponent::handle_command_(const std::string &action,
 
   if (action == "reboot") {
     ESP_LOGW(TAG, "Reboot requested by controller");
-    delay(100);
     esp_restart();
     return "\"ok\"";
   }
@@ -313,7 +312,6 @@ std::string UnifiChimeComponent::handle_command_(const std::string &action,
   if (action == "factoryReset") {
     ESP_LOGW(TAG, "Factory reset requested");
     adoption_.clear_nvs();
-    delay(100);
     esp_restart();
     return "\"ok\"";
   }

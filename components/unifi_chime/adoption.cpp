@@ -42,7 +42,7 @@ bool AdoptionState::check_auth_(httpd_req_t *req) {
 
   const char *b64 = auth_buf + 6;
   size_t b64_len = strlen(b64);
-  uint8_t decoded[128] = {};
+  uint8_t decoded[256] = {};
   size_t decoded_len = 0;
 
   int ret = mbedtls_base64_decode(decoded, sizeof(decoded) - 1, &decoded_len,
@@ -177,15 +177,17 @@ esp_err_t AdoptionState::handle_post_adopt_(httpd_req_t *req) {
 
   std::vector<char> buf(content_len + 1, 0);
   int total_received = 0;
+  int timeout_retries = 0;
   while (total_received < content_len) {
     int received = httpd_req_recv(req, buf.data() + total_received,
                                   content_len - total_received);
     if (received <= 0) {
-      if (received == HTTPD_SOCK_ERR_TIMEOUT)
-        continue;  // retry on timeout
+      if (received == HTTPD_SOCK_ERR_TIMEOUT && ++timeout_retries < 5)
+        continue;
       httpd_resp_send(req, "\"Missing fields\"", HTTPD_RESP_USE_STRLEN);
       return ESP_OK;
     }
+    timeout_retries = 0;
     total_received += received;
   }
 
@@ -220,7 +222,7 @@ esp_err_t AdoptionState::handle_post_adopt_(httpd_req_t *req) {
     self->config_.ip_address = ip_str;
   }
 
-  ESP_LOGI(TAG, "Adoption received: %zu hosts, token=%s",
+  ESP_LOGI(TAG, "Adoption received: %zu hosts, token=%.4s...",
            self->config_.hosts.size(), self->config_.token.c_str());
 
   self->phase_ = AdoptionPhase::ADOPTED;
@@ -360,7 +362,7 @@ bool AdoptionState::load_from_nvs() {
   config_.identity = &identity_;
   config_.adopted = true;
 
-  ESP_LOGI(TAG, "Loaded adoption from NVS: %zu hosts, token=%s",
+  ESP_LOGI(TAG, "Loaded adoption from NVS: %zu hosts, token=%.4s...",
            config_.hosts.size(), config_.token.c_str());
   return true;
 }
@@ -383,7 +385,7 @@ void AdoptionState::save_to_nvs() {
   for (uint8_t i = 0; i < host_count; i++) {
     char key[12];
     snprintf(key, sizeof(key), "host_%d", i);
-    char entry[64];
+    char entry[128];
     snprintf(entry, sizeof(entry), "%s:%d",
              config_.hosts[i].hostname.c_str(), config_.hosts[i].port);
     nvs_set_str(handle, key, entry);

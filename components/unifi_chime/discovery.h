@@ -53,6 +53,9 @@ class Discovery {
 
   /// Build raw BLE advertisement data with TLV payload.
   std::vector<uint8_t> build_ble_adv_data_() const;
+
+  /// Persisted adv payload — must outlive async esp_ble_gap_config_adv_data.
+  std::vector<uint8_t> ble_adv_payload_;
 };
 
 }  // namespace unifi_chime

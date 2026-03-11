@@ -32,7 +32,7 @@ size_t BinmeCodec::parse_segment(const uint8_t *data, size_t len, BinmeSegment &
   memcpy(&payload_len, data + 4, 4);
   payload_len = ntohl(payload_len);
 
-  if (payload_len > 65536 || len < HEADER_SIZE + payload_len) {
+  if (payload_len > 8192 || len < HEADER_SIZE + payload_len) {
     ESP_LOGW(TAG, "Buffer too short for payload: need %u, have %zu",
              (unsigned)(HEADER_SIZE + payload_len), len);
     return 0;
